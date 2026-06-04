@@ -280,18 +280,25 @@ app.get('/api/esp32/stream', async (req, res) => {
 
 // GET — proxy capture foto dari ESP32-CAM
 app.get('/api/esp32/capture', async (_req, res) => {
-  if (!esp32State.ip || !esp32State.online) {
+  if (!esp32State.ip) {
     return res.status(503).json({ error: 'ESP32-CAM tidak online' });
   }
   try {
     const response = await fetch(`http://${esp32State.ip}/capture`, {
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) return res.status(500).json({ error: 'Gagal capture' });
+    if (!response.ok) {
+      esp32State.online = false;
+      return res.status(500).json({ error: 'Gagal capture' });
+    }
     const buffer = await response.buffer();
+    // Berhasil capture = ESP32 online
+    esp32State.online   = true;
+    esp32State.lastSeen = new Date();
     res.setHeader('Content-Type', 'image/jpeg');
     res.send(buffer);
   } catch (err) {
+    esp32State.online = false;
     console.error('Gagal capture ESP32-CAM:', err);
     res.status(500).json({ error: 'Gagal konek ke ESP32-CAM' });
   }
