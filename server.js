@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const multer     = require('multer');
 const FormData   = require('form-data');
 const fetch      = require('node-fetch');
+const mysql      = require('mysql2/promise');
 
 const app    = express();
 const PORT   = process.env.PORT || 5000;
@@ -12,189 +13,229 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(bodyParser.json());
 
-// IP ESP32-CAM
-const ESP32CAM_STREAM_URL  = 'http://10.247.104.11';
-const ESP32CAM_CAPTURE_URL = 'http://10.247.104.11:81/capture';
-
-// ── Helper ─────────────────────────────────────────────
-function rand(min, max) {
-  return +(min + Math.random() * (max - min)).toFixed(2);
-}
-
-// ── Data sensor di memori ──────────────────────────────
-let dataSensor = {
-  lingkungan: {
-    temperature: rand(24, 32),
-    humidity: rand(60, 85),
-    lux: rand(800, 1800),
-  },
-  tanaman: {
-    temperature: rand(22, 30),
-    humidity: rand(70, 90),
-    ph: rand(5.5, 7.5),
-    ec: rand(0.8, 2.0),
-    nitrogen: rand(100, 220),
-    fosfor: rand(25, 80),
-    kalium: rand(150, 280),
-  },
-};
-
-// Update dummy tiap 3 detik
-setInterval(() => {
-  dataSensor = {
-    lingkungan: {
-      temperature: rand(24, 32),
-      humidity: rand(60, 85),
-      lux: rand(800, 1800),
-    },
-    tanaman: {
-      temperature: rand(22, 30),
-      humidity: rand(70, 90),
-      ph: rand(5.5, 7.5),
-      ec: rand(0.8, 2.0),
-      nitrogen: rand(100, 220),
-      fosfor: rand(25, 80),
-      kalium: rand(150, 280),
-    },
-  };
-}, 3000);
-
-// ── Routes Sensor ──────────────────────────────────────
-
-// GET — ambil data sensor terkini
-app.get('/api/sensor', (req, res) => {
-  res.json(dataSensor);
+// ── MySQL Connection Pool ──────────────────────────────
+const pool = mysql.createPool({
+  host:               process.env.DB_HOST     || 'localhost',
+  user:               process.env.DB_USER     || 'root',
+  password:           process.env.DB_PASSWORD || '',
+  database:           process.env.DB_NAME     || 'smart_farm_hafis',
+  port:               process.env.DB_PORT     || 3306,
+  waitForConnections: true,
+  connectionLimit:    10,
+  queueLimit:         0,
 });
 
-// POST — ESP32 kirim data lingkungan
-app.post('/api/sensor/lingkungan', (req, res) => {
-  dataSensor.lingkungan = req.body;
-  console.log('Data lingkungan:', req.body);
-  res.json({ status: 'ok' });
+// ── IP ESP32-CAM ───────────────────────────────────────
+const ESP32CAM_STREAM_URL  = process.env.ESP32CAM_STREAM_URL  || 'http://10.247.104.11';
+const ESP32CAM_CAPTURE_URL = process.env.ESP32CAM_CAPTURE_URL || 'http://10.247.104.11:81/capture';
+
+// ── Health check ───────────────────────────────────────
+app.get('/', (_req, res) => {
+  res.json({ status: 'ok', message: 'Smart Farm Backend is running' });
 });
 
-// POST — ESP32 kirim data tanaman
-app.post('/api/sensor/tanaman', (req, res) => {
-  dataSensor.tanaman = req.body;
-  console.log('Data tanaman:', req.body);
-  res.json({ status: 'ok' });
+// ══════════════════════════════════════════════════════
+// SENSOR — data terkini (ambil row terakhir dari DB)
+// ══════════════════════════════════════════════════════
+
+app.get('/api/sensor', async (_req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM sensor_logs ORDER BY created_at DESC LIMIT 1'
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Belum ada data sensor' });
+    }
+    const r = rows[0];
+    res.json({
+      lingkungan: {
+        temperature: r.temp_lingkungan,
+        humidity:    r.humidity_lingkungan,
+        lux:         r.lux,
+      },
+      tanaman: {
+        temperature: r.temp_tanaman,
+        humidity:    r.humidity_tanaman,
+        ph:          r.ph,
+        ec:          r.ec,
+        nitrogen:    r.nitrogen,
+        fosfor:      r.fosfor,
+        kalium:      r.kalium,
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/sensor error:', err);
+    res.status(500).json({ error: 'Gagal ambil data sensor' });
+  }
 });
 
-// ── Routes ESP32-CAM ───────────────────────────────────
+// POST — ESP32 kirim data lingkungan → simpan ke DB
+app.post('/api/sensor/lingkungan', async (req, res) => {
+  const { temperature, humidity, lux } = req.body;
+  try {
+    await pool.query(
+      `INSERT INTO sensor_logs (temp_lingkungan, humidity_lingkungan, lux)
+       VALUES (?, ?, ?)`,
+      [temperature, humidity, lux]
+    );
+    console.log('Data lingkungan disimpan:', req.body);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    console.error('POST /api/sensor/lingkungan error:', err);
+    res.status(500).json({ error: 'Gagal simpan data lingkungan' });
+  }
+});
+
+// POST — ESP32 kirim data tanaman → simpan ke DB
+app.post('/api/sensor/tanaman', async (req, res) => {
+  const { temperature, humidity, ph, ec, nitrogen, fosfor, kalium } = req.body;
+  try {
+    await pool.query(
+      `INSERT INTO sensor_logs (temp_tanaman, humidity_tanaman, ph, ec, nitrogen, fosfor, kalium)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [temperature, humidity, ph, ec, nitrogen, fosfor, kalium]
+    );
+    console.log('Data tanaman disimpan:', req.body);
+    res.json({ status: 'ok' });
+  } catch (err) {
+    console.error('POST /api/sensor/tanaman error:', err);
+    res.status(500).json({ error: 'Gagal simpan data tanaman' });
+  }
+});
+
+// ══════════════════════════════════════════════════════
+// HISTORY — dari DB dengan filter tanggal
+// ══════════════════════════════════════════════════════
+
+// GET — history sensor
+app.get('/api/history/sensor', async (req, res) => {
+  const { dari, sampai } = req.query;
+  try {
+    let query  = 'SELECT * FROM sensor_logs';
+    const params = [];
+
+    if (dari && sampai) {
+      query += ' WHERE DATE(created_at) BETWEEN ? AND ?';
+      params.push(dari, sampai);
+    }
+    query += ' ORDER BY created_at DESC LIMIT 500';
+
+    const [rows] = await pool.query(query, params);
+    const result = rows.map(r => ({
+      id:        r.id,
+      timestamp: r.created_at,
+      lingkungan: {
+        temperature: r.temp_lingkungan,
+        humidity:    r.humidity_lingkungan,
+        lux:         r.lux,
+      },
+      tanaman: {
+        temperature: r.temp_tanaman,
+        humidity:    r.humidity_tanaman,
+        ph:          r.ph,
+        ec:          r.ec,
+        nitrogen:    r.nitrogen,
+        fosfor:      r.fosfor,
+        kalium:      r.kalium,
+      },
+    }));
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/history/sensor error:', err);
+    res.status(500).json({ error: 'Gagal ambil history sensor' });
+  }
+});
+
+// GET — history deteksi
+app.get('/api/history/deteksi', async (req, res) => {
+  const { dari, sampai } = req.query;
+  try {
+    let query    = 'SELECT * FROM deteksi_logs';
+    const params = [];
+
+    if (dari && sampai) {
+      query += ' WHERE DATE(created_at) BETWEEN ? AND ?';
+      params.push(dari, sampai);
+    }
+    query += ' ORDER BY created_at DESC LIMIT 200';
+
+    const [rows] = await pool.query(query, params);
+    const result = rows.map(r => ({
+      id:         r.id,
+      penyakit:   r.penyakit,
+      confidence: r.confidence,
+      timestamp:  r.created_at,
+    }));
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/history/deteksi error:', err);
+    res.status(500).json({ error: 'Gagal ambil history deteksi' });
+  }
+});
+
+// ══════════════════════════════════════════════════════
+// ESP32-CAM
+// ══════════════════════════════════════════════════════
 
 // GET — kirim URL kamera ke web
-app.get('/api/camera', (req, res) => {
+app.get('/api/camera', (_req, res) => {
   res.json({
-    stream_url: ESP32CAM_STREAM_URL,
+    stream_url:  ESP32CAM_STREAM_URL,
     capture_url: ESP32CAM_CAPTURE_URL,
   });
 });
 
 // GET — proxy capture dari ESP32-CAM
-app.get('/api/camera/capture', async (req, res) => {
+app.get('/api/camera/capture', async (_req, res) => {
   try {
     const response = await fetch(ESP32CAM_CAPTURE_URL);
-
     if (!response.ok) {
-      return res.status(500).json({
-        error: 'Gagal mengambil gambar dari ESP32-CAM',
-      });
+      return res.status(500).json({ error: 'Gagal mengambil gambar dari ESP32-CAM' });
     }
-
     const buffer = await response.buffer();
-
     res.setHeader('Content-Type', 'image/jpeg');
     res.send(buffer);
   } catch (err) {
     console.error('Gagal capture ESP32-CAM:', err);
-    res.status(500).json({
-      error: 'Gagal konek ke ESP32-CAM',
-    });
+    res.status(500).json({ error: 'Gagal konek ke ESP32-CAM' });
   }
 });
 
-// ── Routes History ─────────────────────────────────────
+// ══════════════════════════════════════════════════════
+// DETEKSI PENYAKIT — kirim ke YOLO, simpan hasil ke DB
+// ══════════════════════════════════════════════════════
 
-// GET — history sensor dummy
-app.get('/api/history/sensor', (req, res) => {
-  const dummy = Array.from({ length: 10 }, (_, i) => {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - i * 10);
-
-    return {
-      id: i,
-      timestamp: d.toISOString(),
-      lingkungan: {
-        temperature: rand(24, 32),
-        humidity: rand(60, 85),
-        lux: rand(800, 1800),
-      },
-      tanaman: {
-        temperature: rand(22, 30),
-        humidity: rand(70, 90),
-        ph: rand(5.5, 7.5),
-        ec: rand(0.8, 2.0),
-        nitrogen: rand(100, 220),
-        fosfor: rand(25, 80),
-        kalium: rand(150, 280),
-      },
-    };
-  });
-
-  res.json(dummy);
-});
-
-// GET — history deteksi dummy
-app.get('/api/history/deteksi', (req, res) => {
-  const penyakitList = ['Sehat', 'Leaf spot', 'Anthracnose', 'Fusarium wilt'];
-
-  const dummy = Array.from({ length: 5 }, (_, i) => {
-    const d = new Date();
-    d.setHours(d.getHours() - i);
-
-    const penyakit = penyakitList[Math.floor(Math.random() * penyakitList.length)];
-
-    return {
-      id: i,
-      penyakit,
-      confidence: rand(80, 99),
-      timestamp: d.toISOString(),
-    };
-  });
-
-  res.json(dummy);
-});
-
-// POST — deteksi penyakit ke YOLO service
 app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({
-        error: 'File foto tidak ditemukan',
-      });
+      return res.status(400).json({ error: 'File foto tidak ditemukan' });
     }
 
     const formData = new FormData();
-
     formData.append('foto', req.file.buffer, {
-      filename: 'foto.jpg',
+      filename:    'foto.jpg',
       contentType: req.file.mimetype,
     });
 
     const YOLO_URL = process.env.YOLO_SERVICE_URL || 'http://localhost:8000';
     const response = await fetch(`${YOLO_URL}/detect`, {
-      method: 'POST',
-      body: formData,
+      method:  'POST',
+      body:    formData,
       headers: formData.getHeaders(),
     });
 
     const hasil = await response.json();
+
+    // Simpan hasil deteksi ke DB
+    await pool.query(
+      'INSERT INTO deteksi_logs (penyakit, confidence) VALUES (?, ?)',
+      [hasil.penyakit || 'Tidak terdeteksi', hasil.confidence || 0]
+    );
+
     res.json(hasil);
   } catch (err) {
     console.error('Gagal deteksi:', err);
-    res.status(500).json({
-      error: 'Gagal konek ke YOLO service',
-    });
+    res.status(500).json({ error: 'Gagal konek ke YOLO service' });
   }
 });
 
