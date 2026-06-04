@@ -14,16 +14,35 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // ── MySQL Connection Pool ──────────────────────────────
-const pool = mysql.createPool({
-  host:               process.env.DB_HOST     || 'localhost',
-  user:               process.env.DB_USER     || 'root',
-  password:           process.env.DB_PASSWORD || '',
-  database:           process.env.DB_NAME     || 'smart_farm_hafis',
-  port:               process.env.DB_PORT     || 3306,
-  waitForConnections: true,
-  connectionLimit:    10,
-  queueLimit:         0,
-});
+let pool;
+
+if (process.env.MYSQL_URL) {
+  // Parse MYSQL_URL: mysql://user:pass@host:port/database
+  const url = new URL(process.env.MYSQL_URL);
+  pool = mysql.createPool({
+    host:               url.hostname,
+    user:               url.username,
+    password:           url.password,
+    database:           url.pathname.replace('/', ''),
+    port:               Number(url.port) || 3306,
+    waitForConnections: true,
+    connectionLimit:    10,
+    queueLimit:         0,
+  });
+  console.log(`MySQL terhubung ke ${url.hostname}:${url.port}${url.pathname}`);
+} else {
+  pool = mysql.createPool({
+    host:               process.env.DB_HOST     || 'localhost',
+    user:               process.env.DB_USER     || 'root',
+    password:           process.env.DB_PASSWORD || '',
+    database:           process.env.DB_NAME     || 'smart_farm_hafis',
+    port:               process.env.DB_PORT     || 3306,
+    waitForConnections: true,
+    connectionLimit:    10,
+    queueLimit:         0,
+  });
+  console.log('MySQL terhubung ke localhost');
+}
 
 // ── IP ESP32-CAM ───────────────────────────────────────
 const ESP32CAM_STREAM_URL  = process.env.ESP32CAM_STREAM_URL  || 'http://10.247.104.11';
