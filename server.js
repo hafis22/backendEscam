@@ -196,15 +196,56 @@ app.get('/api/history/deteksi', async (req, res) => {
 // ESP32-CAM
 // ══════════════════════════════════════════════════════
 
-// State IP ESP32 terkini
+// State IP ESP32 terkini (cache di memori + backup ke DB)
 let esp32State = { ip: null, online: false, lastSeen: null };
 
+// Load state ESP32 dari DB saat server start
+(async () => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM esp32_state LIMIT 1"
+    );
+    if (rows.length > 0) {
+      esp32State = {
+        ip:       rows[0].ip,
+        online:   false, // anggap offline dulu sampai heartbeat masuk
+        lastSeen: rows[0].last_seen,
+      };
+      console.log('ESP32 state loaded dari DB:', esp32State.ip);
+    }
+  } catch (err) {
+    // Tabel belum ada, buat dulu
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS esp32_state (
+          id INT PRIMARY KEY DEFAULT 1,
+          ip VARCHAR(20),
+          last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('Tabel esp32_state dibuat');
+    } catch (e) {
+      console.error('Gagal buat tabel esp32_state:', e.message);
+    }
+  }
+})();
+
 // POST — ESP32 register IP saat nyala
-app.post('/api/esp32/register', (req, res) => {
+app.post('/api/esp32/register', async (req, res) => {
   const { ip } = req.body;
   if (!ip) return res.status(400).json({ error: 'IP diperlukan' });
   esp32State = { ip, online: true, lastSeen: new Date() };
   console.log('ESP32 register IP:', ip);
+  // Simpan ke DB
+  try {
+    await pool.query(
+      `INSERT INTO esp32_state (id, ip) VALUES (1, ?)
+       ON DUPLICATE KEY UPDATE ip = VALUES(ip), last_seen = CURRENT_TIMESTAMP`,
+      [ip]
+    );
+  } catch (err) {
+    console.error('Gagal simpan esp32_state:', err.message);
+  }
   res.json({ status: 'ok' });
 });
 
