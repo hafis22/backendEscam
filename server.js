@@ -188,7 +188,7 @@ app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
       headers: formData.getHeaders(),
     });
 
-    const hasil = await response.json();a
+    const hasil = await response.json();
     res.json(hasil);
   } catch (err) {
     console.error('Gagal deteksi:', err);
