@@ -196,7 +196,67 @@ app.get('/api/history/deteksi', async (req, res) => {
 // ESP32-CAM
 // ══════════════════════════════════════════════════════
 
-// GET — kirim URL kamera ke web
+// State IP ESP32 terkini
+let esp32State = { ip: null, online: false, lastSeen: null };
+
+// POST — ESP32 register IP saat nyala
+app.post('/api/esp32/register', (req, res) => {
+  const { ip } = req.body;
+  if (!ip) return res.status(400).json({ error: 'IP diperlukan' });
+  esp32State = { ip, online: true, lastSeen: new Date() };
+  console.log('ESP32 register IP:', ip);
+  res.json({ status: 'ok' });
+});
+
+// GET — cek status & IP ESP32
+app.get('/api/esp32/ip', (_req, res) => {
+  // Anggap offline kalau lebih dari 30 detik tidak ada kabar
+  if (esp32State.lastSeen) {
+    const diff = (new Date() - new Date(esp32State.lastSeen)) / 1000;
+    if (diff > 30) esp32State.online = false;
+  }
+  res.json(esp32State);
+});
+
+// GET — proxy stream MJPEG dari ESP32-CAM
+app.get('/api/esp32/stream', async (req, res) => {
+  if (!esp32State.ip || !esp32State.online) {
+    return res.status(503).json({ error: 'ESP32-CAM tidak online' });
+  }
+  try {
+    const response = await fetch(`http://${esp32State.ip}/stream`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    res.setHeader('Content-Type', response.headers.get('content-type') || 'multipart/x-mixed-replace');
+    res.setHeader('Cache-Control', 'no-cache');
+    response.body.pipe(res);
+    req.on('close', () => response.body.destroy());
+  } catch (err) {
+    console.error('Gagal proxy stream:', err);
+    res.status(500).json({ error: 'Gagal konek ke ESP32-CAM' });
+  }
+});
+
+// GET — proxy capture foto dari ESP32-CAM
+app.get('/api/esp32/capture', async (_req, res) => {
+  if (!esp32State.ip || !esp32State.online) {
+    return res.status(503).json({ error: 'ESP32-CAM tidak online' });
+  }
+  try {
+    const response = await fetch(`http://${esp32State.ip}/capture`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok) return res.status(500).json({ error: 'Gagal capture' });
+    const buffer = await response.buffer();
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Gagal capture ESP32-CAM:', err);
+    res.status(500).json({ error: 'Gagal konek ke ESP32-CAM' });
+  }
+});
+
+// GET — kirim URL kamera ke web (legacy)
 app.get('/api/camera', (_req, res) => {
   res.json({
     stream_url:  ESP32CAM_STREAM_URL,
@@ -204,7 +264,7 @@ app.get('/api/camera', (_req, res) => {
   });
 });
 
-// GET — proxy capture dari ESP32-CAM
+// GET — proxy capture dari ESP32-CAM (legacy)
 app.get('/api/camera/capture', async (_req, res) => {
   try {
     const response = await fetch(ESP32CAM_CAPTURE_URL);
