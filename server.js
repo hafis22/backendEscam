@@ -210,10 +210,10 @@ app.post('/api/esp32/register', (req, res) => {
 
 // GET — cek status & IP ESP32
 app.get('/api/esp32/ip', (_req, res) => {
-  // Anggap offline kalau lebih dari 30 detik tidak ada kabar
+  // Anggap offline kalau lebih dari 10 menit tidak ada kabar
   if (esp32State.lastSeen) {
     const diff = (new Date() - new Date(esp32State.lastSeen)) / 1000;
-    if (diff > 30) esp32State.online = false;
+    if (diff > 600) esp32State.online = false;
   }
   res.json(esp32State);
 });
