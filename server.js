@@ -198,6 +198,7 @@ app.get('/api/history/deteksi', async (req, res) => {
 
 // State IP ESP32 terkini (cache di memori + backup ke DB)
 let esp32State = { ip: null, online: false, lastSeen: null };
+let esp32Frame = null; // Buffer JPEG frame terakhir dari ESP32
 
 // Load state ESP32 dari DB saat server start
 (async () => {
@@ -230,6 +231,25 @@ let esp32State = { ip: null, online: false, lastSeen: null };
   }
 })();
 
+// POST — ESP32 push frame JPEG ke backend
+app.post('/api/esp32/frame', upload.single('frame'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Frame tidak ada' });
+  esp32Frame          = req.file.buffer;
+  esp32State.online   = true;
+  esp32State.lastSeen = new Date();
+  res.json({ status: 'ok' });
+});
+
+// GET — frontend ambil frame terakhir
+app.get('/api/esp32/frame', (_req, res) => {
+  if (!esp32Frame) {
+    return res.status(503).json({ error: 'Belum ada frame' });
+  }
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'no-cache, no-store');
+  res.send(esp32Frame);
+});
+
 // POST — ESP32 register IP saat nyala
 app.post('/api/esp32/register', async (req, res) => {
   const { ip } = req.body;
@@ -259,22 +279,38 @@ app.get('/api/esp32/ip', (_req, res) => {
   res.json(esp32State);
 });
 
-// GET — proxy stream MJPEG dari ESP32-CAM
-app.get('/api/esp32/stream', async (req, res) => {
-  if (!esp32State.ip || !esp32State.online) {
-    return res.status(503).json({ error: 'ESP32-CAM tidak online' });
+// Frame terbaru dari ESP32 (disimpan di memori)
+let esp32LatestFrame = null;
+
+// POST — ESP32 kirim frame JPEG untuk live view
+app.post('/api/esp32/frame', upload.single('frame'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Frame tidak ada' });
+  esp32LatestFrame    = req.file.buffer;
+  esp32State.online   = true;
+  esp32State.lastSeen = new Date();
+  res.json({ status: 'ok' });
+});
+
+// GET — frontend ambil frame terbaru
+app.get('/api/esp32/frame', (_req, res) => {
+  if (!esp32LatestFrame) {
+    return res.status(503).json({ error: 'Belum ada frame' });
   }
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.send(esp32LatestFrame);
+});
+
+// GET — frontend ambil hasil deteksi terbaru
+app.get('/api/esp32/hasil', async (_req, res) => {
   try {
-    const response = await fetch(`http://${esp32State.ip}/stream`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    res.setHeader('Content-Type', response.headers.get('content-type') || 'multipart/x-mixed-replace');
-    res.setHeader('Cache-Control', 'no-cache');
-    response.body.pipe(res);
-    req.on('close', () => response.body.destroy());
+    const [rows] = await pool.query(
+      'SELECT * FROM deteksi_logs ORDER BY created_at DESC LIMIT 1'
+    );
+    if (rows.length === 0) return res.json({ penyakit: null, confidence: 0 });
+    res.json({ penyakit: rows[0].penyakit, confidence: rows[0].confidence, timestamp: rows[0].created_at });
   } catch (err) {
-    console.error('Gagal proxy stream:', err);
-    res.status(500).json({ error: 'Gagal konek ke ESP32-CAM' });
+    res.status(500).json({ error: 'Gagal ambil hasil deteksi' });
   }
 });
 
