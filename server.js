@@ -5,6 +5,8 @@ const multer     = require('multer');
 const FormData   = require('form-data');
 const fetch      = require('node-fetch');
 const mysql      = require('mysql2/promise');
+const http       = require('http');
+const { WebSocketServer } = require('ws');
 
 const app    = express();
 const PORT   = process.env.PORT || 5000;
@@ -12,6 +14,58 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
 app.use(bodyParser.json());
+
+// ── HTTP + WebSocket Server ────────────────────────────
+const server = http.createServer(app);
+const wss    = new WebSocketServer({ server });
+
+// Simpan semua frontend client yang subscribe live frame
+const frontendClients = new Set();
+let esp32WsClient = null; // koneksi WebSocket dari ESP32
+
+wss.on('connection', (ws, req) => {
+  const url = req.url || '';
+
+  if (url === '/ws/esp32') {
+    // Koneksi dari ESP32
+    console.log('[WS] ESP32 terhubung');
+    esp32WsClient = ws;
+    esp32State.online   = true;
+    esp32State.lastSeen = new Date();
+
+    ws.on('message', (data, isBinary) => {
+      if (!isBinary) return; // hanya terima binary (JPEG)
+      esp32Frame          = data;
+      esp32State.online   = true;
+      esp32State.lastSeen = new Date();
+
+      // Broadcast ke semua frontend client
+      for (const client of frontendClients) {
+        if (client.readyState === 1) { // OPEN
+          client.send(data, { binary: true });
+        }
+      }
+    });
+
+    ws.on('close', () => {
+      console.log('[WS] ESP32 disconnect');
+      esp32WsClient     = null;
+      esp32State.online = false;
+    });
+
+  } else if (url === '/ws/frame') {
+    // Koneksi dari frontend
+    console.log('[WS] Frontend client terhubung');
+    frontendClients.add(ws);
+
+    // Kirim frame terakhir langsung kalau ada
+    if (esp32Frame) ws.send(esp32Frame, { binary: true });
+
+    ws.on('close', () => {
+      frontendClients.delete(ws);
+    });
+  }
+});
 
 // ── MySQL Connection Pool ──────────────────────────────
 let pool;
@@ -231,13 +285,26 @@ let esp32Frame = null; // Buffer JPEG frame terakhir dari ESP32
   }
 })();
 
-// POST — ESP32 push frame JPEG ke backend
-app.post('/api/esp32/frame', upload.single('frame'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Frame tidak ada' });
-  esp32Frame          = req.file.buffer;
-  esp32State.online   = true;
-  esp32State.lastSeen = new Date();
-  res.json({ status: 'ok' });
+// POST — ESP32 push frame JPEG ke backend (binary langsung)
+app.post('/api/esp32/frame', (req, res) => {
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
+  req.on('end', () => {
+    const buf = Buffer.concat(chunks);
+    if (buf.length < 100) return res.status(400).json({ error: 'Frame terlalu kecil' });
+
+    esp32Frame          = buf;
+    esp32State.online   = true;
+    esp32State.lastSeen = new Date();
+
+    // Broadcast ke semua frontend WebSocket client
+    for (const client of frontendClients) {
+      if (client.readyState === 1) {
+        client.send(buf, { binary: true });
+      }
+    }
+    res.json({ status: 'ok' });
+  });
 });
 
 // GET — frontend ambil frame terakhir
@@ -277,28 +344,6 @@ app.get('/api/esp32/ip', (_req, res) => {
     if (diff > 600) esp32State.online = false;
   }
   res.json(esp32State);
-});
-
-// Frame terbaru dari ESP32 (disimpan di memori)
-let esp32LatestFrame = null;
-
-// POST — ESP32 kirim frame JPEG untuk live view
-app.post('/api/esp32/frame', upload.single('frame'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Frame tidak ada' });
-  esp32LatestFrame    = req.file.buffer;
-  esp32State.online   = true;
-  esp32State.lastSeen = new Date();
-  res.json({ status: 'ok' });
-});
-
-// GET — frontend ambil frame terbaru
-app.get('/api/esp32/frame', (_req, res) => {
-  if (!esp32LatestFrame) {
-    return res.status(503).json({ error: 'Belum ada frame' });
-  }
-  res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.send(esp32LatestFrame);
 });
 
 // GET — frontend ambil hasil deteksi terbaru
@@ -403,7 +448,7 @@ app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
 });
 
 // ── Start ──────────────────────────────────────────────
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server jalan di http://localhost:${PORT}`);
   console.log(`ESP32-CAM Stream : ${ESP32CAM_STREAM_URL}`);
   console.log(`ESP32-CAM Capture: ${ESP32CAM_CAPTURE_URL}`);
