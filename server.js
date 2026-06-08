@@ -102,6 +102,63 @@ if (process.env.MYSQL_URL) {
 const ESP32CAM_STREAM_URL  = process.env.ESP32CAM_STREAM_URL  || 'http://10.247.104.11';
 const ESP32CAM_CAPTURE_URL = process.env.ESP32CAM_CAPTURE_URL || 'http://10.247.104.11:81/capture';
 
+// ── MQTT Subscriber — terima data sensor ──────────────
+const mqtt = require('mqtt');
+
+const MQTT_URL      = process.env.MQTT_URL      || 'mqtt://202.10.40.129:1883';
+const MQTT_USER     = process.env.MQTT_USER     || 'greenhouse';
+const MQTT_PASS     = process.env.MQTT_PASS     || 'Vanilijaya12';
+const MQTT_TOPIC    = process.env.MQTT_TOPIC    || 'iot/sensor/data';
+
+const mqttClient = mqtt.connect(MQTT_URL, {
+  username:       MQTT_USER,
+  password:       MQTT_PASS,
+  clientId:       'backend_railway_' + Math.random().toString(16).slice(2),
+  reconnectPeriod: 5000,
+});
+
+mqttClient.on('connect', () => {
+  console.log('[MQTT] Terhubung ke broker:', MQTT_URL);
+  mqttClient.subscribe(MQTT_TOPIC, (err) => {
+    if (err) console.error('[MQTT] Gagal subscribe:', err);
+    else     console.log('[MQTT] Subscribe topic:', MQTT_TOPIC);
+  });
+});
+
+mqttClient.on('message', async (topic, message) => {
+  try {
+    const payload = JSON.parse(message.toString());
+    console.log('[MQTT] Data masuk:', payload);
+
+    // Mapping field dari payload MQTT ke kolom DB
+    const tempLing  = payload.temp_lingkungan  ?? payload.temperature_env ?? payload.temp_env   ?? null;
+    const humLing   = payload.humidity_lingkungan ?? payload.humidity_env ?? payload.hum_env    ?? null;
+    const lux       = payload.lux               ?? null;
+    const tempTan   = payload.temp_tanaman      ?? payload.temperature    ?? payload.temp       ?? null;
+    const humTan    = payload.humidity_tanaman  ?? payload.humidity       ?? payload.hum        ?? null;
+    const ph        = payload.ph                ?? null;
+    const ec        = payload.ec                ?? null;
+    const nitrogen  = payload.nitrogen          ?? payload.n              ?? null;
+    const fosfor    = payload.fosfor            ?? payload.p              ?? null;
+    const kalium    = payload.kalium            ?? payload.k              ?? null;
+
+    await pool.query(
+      `INSERT INTO sensor_logs
+        (temp_lingkungan, humidity_lingkungan, lux,
+         temp_tanaman, humidity_tanaman, ph, ec, nitrogen, fosfor, kalium)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [tempLing, humLing, lux, tempTan, humTan, ph, ec, nitrogen, fosfor, kalium]
+    );
+    console.log('[MQTT] Data sensor tersimpan ke DB');
+  } catch (err) {
+    console.error('[MQTT] Gagal proses pesan:', err.message);
+  }
+});
+
+mqttClient.on('error',      (err) => console.error('[MQTT] Error:', err.message));
+mqttClient.on('disconnect', ()    => console.log('[MQTT] Disconnect dari broker'));
+mqttClient.on('reconnect',  ()    => console.log('[MQTT] Reconnecting...'));
+
 // ── Health check ───────────────────────────────────────
 app.get('/', (_req, res) => {
   res.json({ status: 'ok', message: 'Smart Farm Backend is running' });
