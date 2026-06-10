@@ -130,26 +130,42 @@ mqttClient.on('message', async (topic, message) => {
     const payload = JSON.parse(message.toString());
     console.log('[MQTT] Data masuk:', payload);
 
-    // Mapping field dari payload MQTT ke kolom DB
-    const tempLing  = payload.temp_lingkungan  ?? payload.temperature_env ?? payload.temp_env   ?? null;
-    const humLing   = payload.humidity_lingkungan ?? payload.humidity_env ?? payload.hum_env    ?? null;
-    const lux       = payload.lux               ?? null;
-    const tempTan   = payload.temp_tanaman      ?? payload.temperature    ?? payload.temp       ?? null;
-    const humTan    = payload.humidity_tanaman  ?? payload.humidity       ?? payload.hum        ?? null;
-    const ph        = payload.ph                ?? null;
-    const ec        = payload.ec                ?? null;
-    const nitrogen  = payload.nitrogen          ?? payload.n              ?? null;
-    const fosfor    = payload.fosfor            ?? payload.p              ?? null;
-    const kalium    = payload.kalium            ?? payload.k              ?? null;
+    // Tipe lingkungan: suhu_light, lembab_light, intensitas
+    if (payload.suhu_light !== undefined || payload.lembab_light !== undefined) {
+      await pool.query(
+        `INSERT INTO sensor_logs (temp_lingkungan, humidity_lingkungan, lux)
+         VALUES (?, ?, ?)`,
+        [payload.suhu_light ?? null, payload.lembab_light ?? null, payload.intensitas ?? null]
+      );
+      console.log('[MQTT] Data lingkungan tersimpan');
+      return;
+    }
 
-    await pool.query(
-      `INSERT INTO sensor_logs
-        (temp_lingkungan, humidity_lingkungan, lux,
-         temp_tanaman, humidity_tanaman, ph, ec, nitrogen, fosfor, kalium)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [tempLing, humLing, lux, tempTan, humTan, ph, ec, nitrogen, fosfor, kalium]
-    );
-    console.log('[MQTT] Data sensor tersimpan ke DB');
+    // Tipe tanaman zone 1: suhu_soil, lembab_soil, conductivity, ph, n, p, k
+    if (payload.suhu_soil !== undefined) {
+      await pool.query(
+        `INSERT INTO sensor_logs (temp_tanaman, humidity_tanaman, ec, ph, nitrogen, fosfor, kalium)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [payload.suhu_soil ?? null, payload.lembab_soil ?? null, payload.conductivity ?? null,
+         payload.ph ?? null, payload.n ?? null, payload.p ?? null, payload.k ?? null]
+      );
+      console.log('[MQTT] Data tanaman zone1 tersimpan');
+      return;
+    }
+
+    // Tipe tanaman zone 2: suhu_soil2, lembab_soil2, conductivity2, ph2, n2, p2, k2
+    if (payload.suhu_soil2 !== undefined) {
+      await pool.query(
+        `INSERT INTO sensor_logs (temp_tanaman, humidity_tanaman, ec, ph, nitrogen, fosfor, kalium)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [payload.suhu_soil2 ?? null, payload.lembab_soil2 ?? null, payload.conductivity2 ?? null,
+         payload.ph2 ?? null, payload.n2 ?? null, payload.p2 ?? null, payload.k2 ?? null]
+      );
+      console.log('[MQTT] Data tanaman zone2 tersimpan');
+      return;
+    }
+
+    console.log('[MQTT] Format tidak dikenal, skip');
   } catch (err) {
     console.error('[MQTT] Gagal proses pesan:', err.message);
   }
