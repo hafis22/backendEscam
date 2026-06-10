@@ -128,7 +128,9 @@ mqttClient.on('connect', () => {
 mqttClient.on('message', async (topic, message) => {
   try {
     const payload = JSON.parse(message.toString());
-    console.log('[MQTT] Data masuk:', payload);
+    const keys = Object.keys(payload);
+    console.log('[MQTT] Keys:', JSON.stringify(keys));
+    console.log('[MQTT] Data masuk:', JSON.stringify(payload));
 
     // Tipe lingkungan: suhu_light, lembab_light, intensitas
     if (payload.suhu_light !== undefined || payload.lembab_light !== undefined) {
