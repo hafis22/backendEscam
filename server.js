@@ -186,27 +186,40 @@ app.get('/', (_req, res) => {
 
 app.get('/api/sensor', async (_req, res) => {
   try {
-    const [rows] = await pool.query(
-      'SELECT * FROM sensor_logs ORDER BY created_at DESC LIMIT 1'
+    // Ambil data lingkungan terbaru (yang punya suhu_light/lembab_light)
+    const [lingRows] = await pool.query(
+      `SELECT * FROM sensor_logs 
+       WHERE temp_lingkungan IS NOT NULL 
+       ORDER BY created_at DESC LIMIT 1`
     );
-    if (rows.length === 0) {
+    // Ambil data tanaman terbaru (yang punya temp_tanaman)
+    const [tanRows] = await pool.query(
+      `SELECT * FROM sensor_logs 
+       WHERE temp_tanaman IS NOT NULL 
+       ORDER BY created_at DESC LIMIT 1`
+    );
+
+    const ling = lingRows[0] || {};
+    const tan  = tanRows[0]  || {};
+
+    if (!lingRows.length && !tanRows.length) {
       return res.status(404).json({ error: 'Belum ada data sensor' });
     }
-    const r = rows[0];
+
     res.json({
       lingkungan: {
-        temperature: r.temp_lingkungan,
-        humidity:    r.humidity_lingkungan,
-        lux:         r.lux,
+        temperature: ling.temp_lingkungan  ?? null,
+        humidity:    ling.humidity_lingkungan ?? null,
+        lux:         ling.lux              ?? null,
       },
       tanaman: {
-        temperature: r.temp_tanaman,
-        humidity:    r.humidity_tanaman,
-        ph:          r.ph,
-        ec:          r.ec,
-        nitrogen:    r.nitrogen,
-        fosfor:      r.fosfor,
-        kalium:      r.kalium,
+        temperature: tan.temp_tanaman     ?? null,
+        humidity:    tan.humidity_tanaman ?? null,
+        ph:          tan.ph               ?? null,
+        ec:          tan.ec               ?? null,
+        nitrogen:    tan.nitrogen         ?? null,
+        fosfor:      tan.fosfor           ?? null,
+        kalium:      tan.kalium           ?? null,
       },
     });
   } catch (err) {
