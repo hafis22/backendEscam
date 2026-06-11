@@ -272,17 +272,33 @@ app.post('/api/sensor/tanaman', async (req, res) => {
 app.get('/api/history/sensor', async (req, res) => {
   const { dari, sampai } = req.query;
   try {
-    let query  = 'SELECT * FROM sensor_logs';
+    let whereBase = '';
     const params = [];
 
     if (dari && sampai) {
-      query += ' WHERE DATE(created_at) BETWEEN ? AND ?';
+      whereBase = ' AND DATE(created_at) BETWEEN ? AND ?';
+      params.push(dari, sampai);
       params.push(dari, sampai);
     }
-    query += ' ORDER BY created_at DESC LIMIT 500';
 
-    const [rows] = await pool.query(query, params);
-    const result = rows.map(r => ({
+    // Ambil history lingkungan (hanya row yang punya data lingkungan)
+    const [lingRows] = await pool.query(
+      `SELECT * FROM sensor_logs WHERE temp_lingkungan IS NOT NULL${whereBase} ORDER BY created_at DESC LIMIT 200`,
+      dari && sampai ? [dari, sampai] : []
+    );
+
+    // Ambil history tanaman (hanya row yang punya data tanaman)
+    const [tanRows] = await pool.query(
+      `SELECT * FROM sensor_logs WHERE temp_tanaman IS NOT NULL${whereBase} ORDER BY created_at DESC LIMIT 200`,
+      dari && sampai ? [dari, sampai] : []
+    );
+
+    // Gabung dan sort berdasarkan waktu
+    const allRows = [...lingRows, ...tanRows].sort(
+      (a, b) => new Date(b.created_at) - new Date(a.created_at)
+    ).slice(0, 500);
+
+    const result = allRows.map(r => ({
       id:        r.id,
       timestamp: r.created_at,
       lingkungan: {
