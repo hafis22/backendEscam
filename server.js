@@ -601,9 +601,30 @@ app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
       method:  'POST',
       body:    formData,
       headers: formData.getHeaders(),
+      signal:  AbortSignal.timeout(60000), // 60 detik timeout
     });
 
-    const hasil = await response.json();
+    // Baca body sebagai text dulu — hindari crash kalau YOLO return non-JSON
+    const rawText = await response.text();
+
+    if (!response.ok) {
+      console.error(`YOLO HTTP ${response.status}:`, rawText.slice(0, 200));
+      return res.status(502).json({
+        error: `YOLO service error (HTTP ${response.status})`,
+        detail: rawText.slice(0, 200),
+      });
+    }
+
+    let hasil;
+    try {
+      hasil = JSON.parse(rawText);
+    } catch (_) {
+      console.error('YOLO return non-JSON:', rawText.slice(0, 200));
+      return res.status(502).json({
+        error: 'YOLO service return response tidak valid',
+        detail: rawText.slice(0, 200),
+      });
+    }
 
     // Simpan hasil deteksi ke DB
     await pool.query(
