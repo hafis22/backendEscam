@@ -67,9 +67,6 @@ wss.on('connection', (ws, req) => {
     console.log('[WS] Frontend client terhubung');
     frontendClients.add(ws);
 
-    // Kirim frame terakhir langsung kalau ada
-    if (esp32Frame) ws.send(esp32Frame, { binary: true });
-
     ws.on('close', () => {
       frontendClients.delete(ws);
     });
