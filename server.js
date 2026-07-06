@@ -432,8 +432,13 @@ let esp32Frame = null; // Buffer JPEG frame terakhir dari ESP32
 
 // POST — ESP32 push frame JPEG ke backend (binary langsung)
 app.post('/api/esp32/frame', (req, res) => {
+  // Tangkap abort — ESP32 kadang putus sebelum body selesai terkirim
+  req.on('aborted', () => {
+    console.warn('[FRAME] Request aborted oleh ESP32 (timeout atau koneksi putus)');
+  });
+
   // req.body sudah berupa Buffer dari express.raw()
-  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.concat([]);
+  const buf = Buffer.isBuffer(req.body) ? req.body : null;
 
   // Fallback: baca stream manual kalau express.raw tidak jalan
   if (!buf || buf.length < 100) {
@@ -449,7 +454,10 @@ app.post('/api/esp32/frame', (req, res) => {
       for (const client of frontendClients) {
         if (client.readyState === 1) client.send(rawBuf, { binary: true });
       }
-      res.json({ status: 'ok' });
+      if (!res.headersSent) res.json({ status: 'ok' });
+    });
+    req.on('error', (err) => {
+      console.warn('[FRAME] Stream error:', err.message);
     });
     return;
   }
@@ -461,7 +469,7 @@ app.post('/api/esp32/frame', (req, res) => {
   for (const client of frontendClients) {
     if (client.readyState === 1) client.send(buf, { binary: true });
   }
-  res.json({ status: 'ok' });
+  if (!res.headersSent) res.json({ status: 'ok' });
 });
 
 // GET — frontend ambil frame terakhir
