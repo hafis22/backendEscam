@@ -254,7 +254,11 @@ app.get('/api/sensor', async (_req, res) => {
     const tan  = tanRows[0]  || {};
 
     if (!lingRows.length && !tanRows.length) {
-      return res.status(404).json({ error: 'Belum ada data sensor' });
+      // Belum ada data, return default kosong (bukan error)
+      return res.json({
+        lingkungan: { temperature: null, humidity: null, lux: null },
+        tanaman:    { temperature: null, humidity: null, ph: null, ec: null, nitrogen: null, fosfor: null, kalium: null },
+      });
     }
 
     res.json({
