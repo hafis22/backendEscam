@@ -12,7 +12,13 @@ const app    = express();
 const PORT   = process.env.PORT || 5000;
 const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://frontendespcam-production.up.railway.app',
+    'http://localhost:3000',
+  ],
+  credentials: true,
+}));
 app.use(bodyParser.json());
 
 // ── HTTP + WebSocket Server ────────────────────────────
@@ -89,7 +95,7 @@ if (process.env.MYSQL_URL) {
     host:               process.env.DB_HOST     || 'localhost',
     user:               process.env.DB_USER     || 'root',
     password:           process.env.DB_PASSWORD || '',
-    database:           process.env.DB_NAME     || 'smart_farm_hafis',
+    database:           process.env.DB_NAME     || 'railway',
     port:               process.env.DB_PORT     || 3306,
     waitForConnections: true,
     connectionLimit:    10,
@@ -176,6 +182,49 @@ mqttClient.on('message', async (topic, message) => {
 mqttClient.on('error',      (err) => console.error('[MQTT] Error:', err.message));
 mqttClient.on('disconnect', ()    => console.log('[MQTT] Disconnect dari broker'));
 mqttClient.on('reconnect',  ()    => console.log('[MQTT] Reconnecting...'));
+
+// ── Auto-migrate: buat tabel kalau belum ada ──────────
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS sensor_logs (
+        id int NOT NULL AUTO_INCREMENT,
+        temp_lingkungan float DEFAULT NULL,
+        humidity_lingkungan float DEFAULT NULL,
+        lux float DEFAULT NULL,
+        temp_tanaman float DEFAULT NULL,
+        humidity_tanaman float DEFAULT NULL,
+        ph float DEFAULT NULL,
+        ec float DEFAULT NULL,
+        nitrogen float DEFAULT NULL,
+        fosfor float DEFAULT NULL,
+        kalium float DEFAULT NULL,
+        created_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS deteksi_logs (
+        id int NOT NULL AUTO_INCREMENT,
+        penyakit varchar(100) DEFAULT NULL,
+        confidence float DEFAULT NULL,
+        created_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS esp32_state (
+        id int NOT NULL DEFAULT 1,
+        ip varchar(20) DEFAULT NULL,
+        last_seen timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        PRIMARY KEY (id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    console.log('[DB] Tabel siap');
+  } catch (err) {
+    console.error('[DB] Gagal auto-migrate:', err.message);
+  }
+})();
 
 // ── Health check ───────────────────────────────────────
 app.get('/', (_req, res) => {
@@ -367,25 +416,13 @@ let esp32Frame = null; // Buffer JPEG frame terakhir dari ESP32
     if (rows.length > 0) {
       esp32State = {
         ip:       rows[0].ip,
-        online:   false, // anggap offline dulu sampai heartbeat masuk
+        online:   false,
         lastSeen: rows[0].last_seen,
       };
       console.log('ESP32 state loaded dari DB:', esp32State.ip);
     }
   } catch (err) {
-    // Tabel belum ada, buat dulu
-    try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS esp32_state (
-          id INT PRIMARY KEY DEFAULT 1,
-          ip VARCHAR(20),
-          last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        )
-      `);
-      console.log('Tabel esp32_state dibuat');
-    } catch (e) {
-      console.error('Gagal buat tabel esp32_state:', e.message);
-    }
+    console.error('Gagal load esp32_state:', err.message);
   }
 })();
 
