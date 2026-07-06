@@ -19,6 +19,8 @@ app.use(cors({
   ],
   credentials: true,
 }));
+// Raw buffer untuk frame ESP32 — harus sebelum bodyParser.json
+app.use('/api/esp32/frame', express.raw({ type: 'image/jpeg', limit: '200kb' }));
 app.use(bodyParser.json());
 
 // ── HTTP + WebSocket Server ────────────────────────────
@@ -432,24 +434,36 @@ let esp32Frame = null; // Buffer JPEG frame terakhir dari ESP32
 
 // POST — ESP32 push frame JPEG ke backend (binary langsung)
 app.post('/api/esp32/frame', (req, res) => {
-  const chunks = [];
-  req.on('data', chunk => chunks.push(chunk));
-  req.on('end', () => {
-    const buf = Buffer.concat(chunks);
-    if (buf.length < 100) return res.status(400).json({ error: 'Frame terlalu kecil' });
+  // req.body sudah berupa Buffer dari express.raw()
+  const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.concat([]);
 
-    esp32Frame          = buf;
-    esp32State.online   = true;
-    esp32State.lastSeen = new Date();
-
-    // Broadcast ke semua frontend WebSocket client
-    for (const client of frontendClients) {
-      if (client.readyState === 1) {
-        client.send(buf, { binary: true });
+  // Fallback: baca stream manual kalau express.raw tidak jalan
+  if (!buf || buf.length < 100) {
+    const chunks = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const rawBuf = Buffer.concat(chunks);
+      console.log(`[FRAME] Stream fallback: ${rawBuf.length} bytes`);
+      if (rawBuf.length < 100) return res.status(400).json({ error: 'Frame terlalu kecil' });
+      esp32Frame          = rawBuf;
+      esp32State.online   = true;
+      esp32State.lastSeen = new Date();
+      for (const client of frontendClients) {
+        if (client.readyState === 1) client.send(rawBuf, { binary: true });
       }
-    }
-    res.json({ status: 'ok' });
-  });
+      res.json({ status: 'ok' });
+    });
+    return;
+  }
+
+  console.log(`[FRAME] Diterima: ${buf.length} bytes`);
+  esp32Frame          = buf;
+  esp32State.online   = true;
+  esp32State.lastSeen = new Date();
+  for (const client of frontendClients) {
+    if (client.readyState === 1) client.send(buf, { binary: true });
+  }
+  res.json({ status: 'ok' });
 });
 
 // GET — frontend ambil frame terakhir
