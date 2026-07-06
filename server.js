@@ -204,6 +204,8 @@ wss.on('connection', (ws, req) => {
       console.log('[WS] ESP32 disconnect');
       esp32WsClient     = null;
       esp32State.online = false;
+      // Beritahu semua frontend bahwa ESP32 offline
+      broadcastJSON({ type: 'esp32_offline' });
     });
 
   // ── Koneksi dari frontend ───────────────────────────
