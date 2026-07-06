@@ -574,7 +574,11 @@ app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
       contentType: req.file.mimetype,
     });
 
-    const YOLO_URL = process.env.YOLO_SERVICE_URL || 'http://localhost:8000';
+    const YOLO_URL = process.env.YOLO_SERVICE_URL;
+    if (!YOLO_URL) {
+      console.error('YOLO_SERVICE_URL tidak di-set!');
+      return res.status(500).json({ error: 'YOLO service URL belum dikonfigurasi' });
+    }
     const response = await fetch(`${YOLO_URL}/detect`, {
       method:  'POST',
       body:    formData,
