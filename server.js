@@ -663,4 +663,23 @@ server.listen(PORT, () => {
     }, 4 * 60 * 1000); // tiap 4 menit
     console.log('[PING] Keep-alive YOLO aktif');
   }
+
+  // Self ping — cegah backend Railway sendiri sleep
+  // Railway free tier sleep setelah ~10 menit tidak ada request
+  const SELF_URL = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : null;
+  if (SELF_URL) {
+    setInterval(async () => {
+      try {
+        const r = await fetch(`${SELF_URL}/`, { signal: AbortSignal.timeout(10000) });
+        console.log(`[PING] Self health: ${r.status}`);
+      } catch (e) {
+        console.warn('[PING] Self ping gagal:', e.message);
+      }
+    }, 4 * 60 * 1000); // tiap 4 menit
+    console.log(`[PING] Keep-alive self aktif: ${SELF_URL}`);
+  } else {
+    console.warn('[PING] RAILWAY_PUBLIC_DOMAIN tidak di-set, self ping dinonaktifkan');
+  }
 });
