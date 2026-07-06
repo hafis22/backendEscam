@@ -453,6 +453,14 @@ app.get('/api/esp32/frame', (_req, res) => {
   if (!esp32Frame) {
     return res.status(503).json({ error: 'Belum ada frame' });
   }
+  // Anggap stale kalau ESP32 tidak kirim frame lebih dari 10 detik
+  if (esp32State.lastSeen) {
+    const diffSec = (new Date() - new Date(esp32State.lastSeen)) / 1000;
+    if (diffSec > 10) {
+      esp32State.online = false;
+      return res.status(503).json({ error: 'ESP32 offline (frame stale)' });
+    }
+  }
   res.setHeader('Content-Type', 'image/jpeg');
   res.setHeader('Cache-Control', 'no-cache, no-store');
   res.send(esp32Frame);
@@ -479,10 +487,10 @@ app.post('/api/esp32/register', async (req, res) => {
 
 // GET — cek status & IP ESP32
 app.get('/api/esp32/ip', (_req, res) => {
-  // Anggap offline kalau lebih dari 10 menit tidak ada kabar
+  // Anggap offline kalau lebih dari 15 detik tidak ada frame masuk
   if (esp32State.lastSeen) {
     const diff = (new Date() - new Date(esp32State.lastSeen)) / 1000;
-    if (diff > 600) esp32State.online = false;
+    if (diff > 15) esp32State.online = false;
   }
   res.json(esp32State);
 });
