@@ -14,6 +14,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors({
   origin: [
+    'https://frontend-espcam-g61d.vercel.app',
     'https://frontendespcam-production.up.railway.app',
     'http://localhost:3000',
   ],
@@ -645,4 +646,19 @@ server.listen(PORT, () => {
   console.log(`Server jalan di http://localhost:${PORT}`);
   console.log(`ESP32-CAM Stream : ${ESP32CAM_STREAM_URL}`);
   console.log(`ESP32-CAM Capture: ${ESP32CAM_CAPTURE_URL}`);
+
+  // ── Keep-alive pinger — cegah Railway sleep ──────────
+  // Hit YOLO /health tiap 4 menit supaya service tidak tidur
+  const YOLO_URL = process.env.YOLO_SERVICE_URL;
+  if (YOLO_URL) {
+    setInterval(async () => {
+      try {
+        const r = await fetch(`${YOLO_URL}/health`, { signal: AbortSignal.timeout(10000) });
+        console.log(`[PING] YOLO health: ${r.status}`);
+      } catch (e) {
+        console.warn('[PING] YOLO tidak response:', e.message);
+      }
+    }, 4 * 60 * 1000); // tiap 4 menit
+    console.log('[PING] Keep-alive YOLO aktif');
+  }
 });
