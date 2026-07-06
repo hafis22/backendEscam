@@ -53,7 +53,7 @@ function broadcastJSON(obj) {
 }
 
 // ── Proses YOLO di background (non-blocking) ──────────────
-async function prosesYOLO(jpegBuffer) {
+async function prosesYOLO(jpegBuffer, base64Foto) {
   const YOLO_URL = process.env.YOLO_SERVICE_URL;
   if (!YOLO_URL) {
     console.error('[YOLO] YOLO_SERVICE_URL tidak di-set');
@@ -106,11 +106,12 @@ async function prosesYOLO(jpegBuffer) {
 
     console.log(`[YOLO] Hasil: ${hasil.penyakit} (${hasil.confidence}%)`);
 
-    // Push hasil ke semua frontend via WebSocket
+    // Push hasil + foto ke semua frontend via WebSocket
     broadcastJSON({
       type:       'detect_result',
       penyakit:   hasil.penyakit   || 'Tidak terdeteksi',
       confidence: hasil.confidence || 0,
+      foto:       base64Foto || null,
       timestamp:  new Date().toISOString(),
     });
 
@@ -122,7 +123,6 @@ async function prosesYOLO(jpegBuffer) {
   } catch (err) {
     console.error('[YOLO] Error:', err.message);
     broadcastJSON({ type: 'detect_error', message: 'Gagal konek ke YOLO service' });
-
     // Tetap beri tahu ESP32 supaya isDetecting di-reset
     if (esp32WsClient && esp32WsClient.readyState === 1) {
       esp32WsClient.send(JSON.stringify({ type: 'detect_done' }));
@@ -179,13 +179,18 @@ wss.on('connection', (ws, req) => {
         broadcastBinary(jpegBuf);
 
       } else if (flag === FLAG_DETECT) {
-        // Frame deteksi — broadcast dulu (live tetap jalan), lalu proses YOLO async
-        esp32Frame = jpegBuf;
-        broadcastBinary(jpegBuf);
+        // Frame deteksi:
+        // 1. Convert ke base64 → kirim ke frontend supaya tampil foto dulu
+        // 2. Proses YOLO async (live dari ESP32 berhenti selama isDetecting = true)
+        // 3. Setelah YOLO selesai → kirim hasil + foto ke frontend, resume live
+        const jpegBuffer = Buffer.from(jpegBuf);
+        const base64Foto = 'data:image/jpeg;base64,' + jpegBuffer.toString('base64');
+
+        // Kirim foto ke frontend — frontend berhenti live, tampil foto ini
+        broadcastJSON({ type: 'detect_frame', foto: base64Foto });
 
         console.log('[WS] Terima frame deteksi dari ESP32, proses YOLO...');
-        // Tidak di-await — non-blocking, live stream tetap jalan
-        prosesYOLO(Buffer.from(jpegBuf)).catch(err =>
+        prosesYOLO(jpegBuffer, base64Foto).catch(err =>
           console.error('[YOLO] Uncaught:', err.message)
         );
 
