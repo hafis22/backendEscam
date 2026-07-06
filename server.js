@@ -134,6 +134,17 @@ async function prosesYOLO(jpegBuffer) {
 wss.on('connection', (ws, req) => {
   const url = req.url || '';
 
+  // Tangkap error level WS server — cegah uncaught exception crash server
+  ws.on('error', (err) => {
+    // Error "payload length > 2^53" = frame corrupt dari ESP32, bukan fatal
+    if (err.message && err.message.includes('payload length')) {
+      console.warn('[WS] Frame corrupt dari ESP32 (payload length error), skip');
+    } else {
+      console.error('[WS] Error:', err.message);
+    }
+    // Jangan re-throw — biarkan koneksi tetap hidup kalau bisa
+  });
+
   // ── Koneksi dari ESP32 ──────────────────────────────
   if (url === '/ws/esp32') {
     console.log('[WS] ESP32 terhubung');
@@ -142,7 +153,19 @@ wss.on('connection', (ws, req) => {
     esp32State.lastSeen = new Date();
 
     ws.on('message', (data, isBinary) => {
-      if (!isBinary || data.length < 2) return;
+      if (!isBinary) return;
+
+      // Guard: kalau data bukan Buffer (misal corrupt frame), skip
+      if (!Buffer.isBuffer(data)) return;
+
+      // Minimum: 1 byte flag + minimal 500 byte JPEG
+      if (data.length < 501) return;
+
+      // Guard: maksimum 200KB — lebih dari itu kemungkinan corrupt header
+      if (data.length > 204800) {
+        console.warn(`[WS] ESP32 frame terlalu besar (${data.length} bytes), skip`);
+        return;
+      }
 
       const flag     = data[0];           // byte pertama = flag
       const jpegBuf  = data.slice(1);     // sisa = JPEG
@@ -176,10 +199,6 @@ wss.on('connection', (ws, req) => {
       console.log('[WS] ESP32 disconnect');
       esp32WsClient     = null;
       esp32State.online = false;
-    });
-
-    ws.on('error', (err) => {
-      console.error('[WS] ESP32 error:', err.message);
     });
 
   // ── Koneksi dari frontend ───────────────────────────
