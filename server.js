@@ -580,6 +580,11 @@ app.get('/api/camera/capture', async (_req, res) => {
 // ══════════════════════════════════════════════════════
 
 app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
+  // Tangani kalau client (ESP32) putus di tengah jalan
+  req.on('aborted', () => {
+    console.warn('[DETEKSI] Request aborted oleh client (ESP32 timeout?)');
+  });
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'File foto tidak ditemukan' });
@@ -600,7 +605,7 @@ app.post('/api/deteksi', upload.single('foto'), async (req, res) => {
       method:  'POST',
       body:    formData,
       headers: formData.getHeaders(),
-      signal:  AbortSignal.timeout(60000), // 60 detik timeout
+      signal:  AbortSignal.timeout(110000), // 110 detik — sedikit di bawah timeout ESP32
     });
 
     // Baca body sebagai text dulu — hindari crash kalau YOLO return non-JSON
