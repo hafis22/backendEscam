@@ -94,11 +94,11 @@ async function prosesYOLO(jpegBuffer, base64Foto) {
       return;
     }
 
-    // Simpan ke DB
+    // Simpan ke DB termasuk foto JPEG
     try {
       await pool.query(
-        'INSERT INTO deteksi_logs (penyakit, confidence) VALUES (?, ?)',
-        [hasil.penyakit || 'Tidak terdeteksi', hasil.confidence || 0]
+        'INSERT INTO deteksi_logs (penyakit, confidence, foto) VALUES (?, ?, ?)',
+        [hasil.penyakit || 'Tidak terdeteksi', hasil.confidence || 0, jpegBuffer]
       );
     } catch (dbErr) {
       console.error('[YOLO] Gagal simpan ke DB:', dbErr.message);
@@ -106,12 +106,19 @@ async function prosesYOLO(jpegBuffer, base64Foto) {
 
     console.log(`[YOLO] Hasil: ${hasil.penyakit} (${hasil.confidence}%)`);
 
-    // Push hasil + foto ke semua frontend via WebSocket
+    // Ambil id yang baru di-insert
+    const [inserted] = await pool.query(
+      'SELECT LAST_INSERT_ID() as id'
+    );
+    const deteksiId = inserted[0]?.id || null;
+
+    // Push hasil ke semua frontend via WebSocket
+    // foto_url = endpoint backend, tidak perlu kirim base64 besar
     broadcastJSON({
       type:       'detect_result',
       penyakit:   hasil.penyakit   || 'Tidak terdeteksi',
       confidence: hasil.confidence || 0,
-      foto:       base64Foto || null,
+      foto_url:   deteksiId ? `/api/foto/${deteksiId}` : null,
       timestamp:  new Date().toISOString(),
     });
 
@@ -349,6 +356,7 @@ mqttClient.on('reconnect',  ()    => console.log('[MQTT] Reconnecting...'));
         id int NOT NULL AUTO_INCREMENT,
         penyakit varchar(100) DEFAULT NULL,
         confidence float DEFAULT NULL,
+        foto MEDIUMBLOB DEFAULT NULL,
         created_at timestamp NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -361,6 +369,11 @@ mqttClient.on('reconnect',  ()    => console.log('[MQTT] Reconnecting...'));
         PRIMARY KEY (id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
+    // Migrate: tambah kolom foto kalau belum ada
+    await pool.query(`
+      ALTER TABLE deteksi_logs
+      ADD COLUMN IF NOT EXISTS foto MEDIUMBLOB DEFAULT NULL
+    `).catch(() => {}); // ignore kalau sudah ada atau DB tidak support IF NOT EXISTS
     console.log('[DB] Tabel siap');
   } catch (err) {
     console.error('[DB] Gagal auto-migrate:', err.message);
@@ -486,7 +499,7 @@ app.get('/api/history/sensor', async (req, res) => {
 app.get('/api/history/deteksi', async (req, res) => {
   const { dari, sampai } = req.query;
   try {
-    let query  = 'SELECT * FROM deteksi_logs';
+    let query  = 'SELECT id, penyakit, confidence, created_at FROM deteksi_logs';
     const params = [];
     if (dari && sampai) { query += ' WHERE DATE(created_at) BETWEEN ? AND ?'; params.push(dari, sampai); }
     query += ' ORDER BY created_at DESC LIMIT 200';
@@ -497,9 +510,28 @@ app.get('/api/history/deteksi', async (req, res) => {
       penyakit:   r.penyakit,
       confidence: r.confidence,
       timestamp:  r.created_at,
+      foto_url:   `/api/foto/${r.id}`,   // URL foto untuk ditampilkan di frontend
     })));
   } catch (err) {
     res.status(500).json({ error: 'Gagal ambil history deteksi' });
+  }
+});
+
+// Serve foto JPEG dari DB
+app.get('/api/foto/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT foto FROM deteksi_logs WHERE id = ?',
+      [req.params.id]
+    );
+    if (!rows.length || !rows[0].foto) {
+      return res.status(404).json({ error: 'Foto tidak ditemukan' });
+    }
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400'); // cache 1 hari
+    res.send(rows[0].foto);
+  } catch (err) {
+    res.status(500).json({ error: 'Gagal ambil foto' });
   }
 });
 
