@@ -369,11 +369,16 @@ mqttClient.on('reconnect',  ()    => console.log('[MQTT] Reconnecting...'));
         PRIMARY KEY (id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
-    // Migrate: tambah kolom foto kalau belum ada
-    await pool.query(`
-      ALTER TABLE deteksi_logs
-      ADD COLUMN IF NOT EXISTS foto MEDIUMBLOB DEFAULT NULL
-    `).catch(() => {}); // ignore kalau sudah ada atau DB tidak support IF NOT EXISTS
+    // Migrate: tambah kolom foto kalau belum ada (kompatibel semua versi MySQL)
+    try {
+      await pool.query(`ALTER TABLE deteksi_logs ADD COLUMN foto MEDIUMBLOB DEFAULT NULL`);
+      console.log('[DB] Kolom foto ditambahkan ke deteksi_logs');
+    } catch (err) {
+      // Error 1060 = Duplicate column name — kolom sudah ada, aman diabaikan
+      if (err.errno !== 1060) {
+        console.error('[DB] Gagal tambah kolom foto:', err.message);
+      }
+    }
     console.log('[DB] Tabel siap');
   } catch (err) {
     console.error('[DB] Gagal auto-migrate:', err.message);
