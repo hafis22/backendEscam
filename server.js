@@ -211,7 +211,7 @@ wss.on('connection', (ws, req) => {
       console.log('[WS] ESP32 disconnect');
       esp32WsClient     = null;
       esp32State.online = false;
-      // Beritahu semua frontend bahwa ESP32 offline
+      esp32Frame        = null;  // clear frame biar tidak tampil gambar lama
       broadcastJSON({ type: 'esp32_offline' });
     });
 
@@ -220,9 +220,12 @@ wss.on('connection', (ws, req) => {
     console.log('[WS] Frontend client terhubung');
     frontendClients.add(ws);
 
-    // Kirim frame terakhir yang ada supaya frontend langsung tampil
-    if (esp32Frame) {
-      ws.send(esp32Frame, { binary: true });
+    // Kirim frame terakhir hanya kalau ESP32 masih online (lastSeen < 15 detik)
+    if (esp32Frame && esp32State.lastSeen) {
+      const diff = (new Date() - new Date(esp32State.lastSeen)) / 1000;
+      if (diff < 15) {
+        ws.send(esp32Frame, { binary: true });
+      }
     }
 
     ws.on('close', () => {
